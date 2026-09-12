@@ -1,0 +1,38 @@
+Act as an expert Quantitative Finance Engineer and Python Developer. 
+
+I need a complete, single-file Python research and screening script using yfinance and pandas. The tool must look backward across a custom date range to analyze a specific high-momentum intraday short-selling strategy.
+
+### Target Universe:
+- Use standard Nifty 500 mid/small-cap stock tickers (with '.NS' suffix for NSE).
+- EXCLUDE the top 50 stocks belonging to the Nifty 50 index (to focus only on high-momentum, high-beta mid-caps).
+
+### Step-by-Step Logic to Implement:
+
+1. User Inputs: Prompt the user dynamically via the terminal for a START_DATE and END_DATE (Format: YYYY-MM-DD).
+
+2. Daily Screening Lookback: 
+   - Fetch daily ('1d') historical data for each ticker.
+   - Automatically include a 60-day buffer before START_DATE to calculate a 20-day Simple Moving Average of Volume (vol_ma20).
+   - Step through the timeline day-by-day. Identify a target day (T0) only if:
+     - The stock dropped by >= 2.0% yesterday (T-1) AND dropped by >= 2.0% today (T0).
+     - The Volume at T0 is >= 1.3x higher than its 20-day Volume SMA.
+
+3. Yahoo Finance 60-Day Intraday Protection:
+   - Check if the matching T0 date is older than 58 days from today.
+   - If it IS older than 58 days, log the stock and date in the final report, set 'Trigger Time' to "N/A (>60d)", and do not download 15m data.
+   - If it IS within 58 days, proceed to download the 15-minute candles for that single day.
+
+4. 15-Minute Intraday Breakdown:
+   - Extract the 'Low' price of the very first 15-minute candle (09:15 AM to 09:30 AM). Save this as 'morning_low'.
+   - Run pure pandas mathematical calculations for RSI (14) and MACD (12, 26, 9) over the 15m closes. Do not use external TA wrappers like ta-lib or pandas_ta.
+   - Scan every subsequent 15m candle from 09:30 AM onwards. Trigger a verified setup on the first candle where:
+     - Candle Close < morning_low (Breakout floor)
+     - Candle RSI > 25 (Safety filter against oversold bounces)
+     - Candle MACD Line < Signal Line (Bearish trend acceleration)
+   - Once a match is triggered, log it and immediately 'break' the inner loop for that day to avoid duplicate entries.
+
+5. Formatting & Robustness:
+   - Flatten any yfinance multi-index columns using: if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+   - Ensure the opening range extraction uses standard integer-location positioning: df_15m.iloc[0]['Low']
+   - Use try-except blocks inside the ticker loop so a single data timeout or download failure does not crash the script.
+   - Print the final result clearly in the console as a clean pandas DataFrame sorted by Date, showing: Ticker, Date, Trigger Time, Day Drop %, Vol Ratio, Breakout Price, and RSI.
