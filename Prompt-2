@@ -1,0 +1,82 @@
+Act as an expert Quantitative Finance Engineer and Python Developer. Build a complete, production-ready, multi-threaded Intraday Momentum Scanner from scratch using the DhanHQ API framework ("dhanhq"). The engine scans the NSE NIFTY 500 universe right at 09:45 AM IST to identify short-biased and long-biased alpha setups based on the 09:15-09:30 and 09:30-09:45 15-minute candles.
+
+Implement the exact architecture, indicator math, scoring matrix, and data layer mappings detailed below.
+
+====================================================================
+1. GLOBAL CONSTANTS & TRADING PARAMETERS
+====================================================================
+- Time Zone: "Asia/Kolkata"
+- Data Granularity: 15-minute intervals ("15")
+- Market Open: 09:15 IST | Decision Trigger Point: 09:45 IST
+- Warmup Horizon: 30 calendar days of historical candles before the scan date.
+- Universe Selection: Download the NIFTY 500 list from:
+  "https://nseindia.com"
+- Exclusion Filter: Download the NIFTY 50 list from:
+  "https://nseindia.com"
+  Subtract NIFTY 50 symbols from NIFTY 500 list. Strip any ".NS" suffix; all internal tickers must use clean, uppercase exchange symbols (e.g., "RELIANCE").
+
+====================================================================
+2. THREAD-SAFE CONCURRENCY & DHAN DATA ENGINE
+====================================================================
+- API Initialization: Instantiate 'dhanhq(client_id, access_token)'.
+- Segment Routing: 
+  * Equities must use: exchange_segment="NSE_EQ", instrument_type="EQUITY"
+  * Indices must use: exchange_segment="IDX_I", instrument_type="INDEX"
+- Data Normalization Function ('clean_ticker_data'):
+  * Convert API response dictionary array into a pandas DataFrame.
+  * Map lower-case fields to standard pandas casing: 'open' -> 'Open', 'high' -> 'High', 'low' -> 'Low', 'close' -> 'Close', 'volume' -> 'Volume', 'start_time' -> 'Timestamp'.
+  * Parse index to Datetime, localize/convert to "Asia/Kolkata", and sort in ascending order. Drop invalid, missing (NaN), or zero-price rows.
+- Concurrency Mapping ('download_intraday_batch_concurrent'):
+  * Wrap the individual ticker API fetch inside a thread-safe function.
+  * Execute asynchronously across the entire universe using 'concurrent.futures.ThreadPoolExecutor' with 'max_workers=16'.
+  * If an asset throws a rate limit or connection timeout error, log it gracefully and skip to the next token without killing the execution thread.
+
+====================================================================
+3. MATHEMATICAL INDICATORS ENGINE (FORMULAS FROM SCRATCH)
+====================================================================
+Calculate all technical indicators over the entire historical warmup data row-by-row before filtering for the current session. Do not calculate using only the current day's candles.
+- EMA (9 & 20): Use the standard Exponential Moving Average formula: Multiplier = 2 / (Period + 1). EMA_today = (Close_today * Multiplier) + (EMA_yesterday * (1 - Multiplier)).
+- RSI (14): Calculate using Wilder's smoothing technique. Delta = Close.diff(). Gain = delta.clip(lower=0), Loss = -delta.clip(upper=0). AvgGain = Gain.ewm(alpha=1/14).mean(), AvgLoss = Loss.ewm(alpha=1/14).mean(). RS = AvgGain / AvgLoss. RSI = 100 - (100 / (1 + RS)). Handle division by zero by setting RSI to 100 if AvgLoss is 0.
+- ATR (14): True Range (TR) = Max(High - Low, Abs(High - Previous Close), Abs(Low - Previous Close)). Smooth TR using an ewm alpha of 1/14. Calculate 'ATR_Pct' = (ATR / Close) * 100.
+
+====================================================================
+4. ADVANCED ALPHA MATRICES (GAP & SECTOR FILTERS)
+====================================================================
+- True Pre-Market Gap Vector:
+  * Isolate the final 15-minute candle of the *previous trading day* before the market open.
+  * Calculate: PreMarket_Gap_Pct = ((Today's 09:15 Open - Yesterday's Close) / Yesterday's Close) * 100.
+- Thematic Sector Matrix Mapping:
+  * Map core stock tickers to their structural sector indices inside a lookup dictionary (e.g., "TCS" -> "NIFTY IT", "SBIN" -> "NIFTY BANK", "RELIANCE" -> "NIFTY ENERGY", "MARUTI" -> "NIFTY AUTO").
+  * Download 15-minute candle data for each sector index on the target date.
+  * Calculate: Sector_Total_Pct = ((Sector 09:45 Close - Sector 09:15 Open) / Sector 09:15 Open) * 100.
+  * Compute Sector Relative Strength Alpha: Sector_Relative_Strength = Ticker_Total_Pct - Sector_Total_Pct.
+
+====================================================================
+5. CONTINUOUS SCORING & DECISION TREE ENGINE
+====================================================================
+Extract the first two candles of today's session: Candle 1 (09:15-09:30) and Candle 2 (09:30-09:45). The decision point is the Close of Candle 2.
+- Compute Movement Percentages:
+  * Opening_Pct = ((Candle 1 Close - Candle 1 Open) / Candle 1 Open) * 100
+  * Confirmation_Pct = ((Candle 2 Close - Candle 2 Open) / Candle 2 Open) * 100
+  * Total_Pct = ((Candle 2 Close - Candle 1 Open) / Candle 1 Open) * 100
+- Liquidity Hurdle: Calculate Turnover Crore = (Candle 2 Volume * Candle 2 Close) / 10,000,000. Filter out any stock where Turnover Crore < 2.0.
+- Scoring Pipeline (Base Score starts at 50.0, clamp final scores between 0.0 and 100.0):
+  * Directional Momentum: Add points smoothly using a continuous clamp function based on the magnitude of Opening_Pct and Confirmation_Pct.
+  * Index Alpha: Compare Total_Pct against NIFTY 50 Total_Pct. Add points for outperformance/underperformance.
+  * VWAP Alignment: Calculate the session-resheduled VWAP for today. VWAP = Cumulative(Typical Price * Volume) / Cumulative(Volume). Add points if the 09:45 Close is below VWAP for Shorts, or above VWAP for Longs.
+  * EMA Structural Layout: Add points for a Short setup if Close < EMA20 and EMA9 < EMA20. Mirror for Long setups.
+  * RSI Fatigue Engine: Apply a deduction penalty if a Short setup is deeply exhausted (RSI < 22). Add +5 bonus points if RSI is in a sustainable bear territory (32 <= RSI <= 55).
+  * Pre-Market Gap Fading: Add +15 points to Short Score if PreMarket_Gap_Pct > +2.0% and Total_Pct is negative (detecting fading institutional buying).
+  * Sector Index Modifier: Add +10 points to Short Score if Sector_Relative_Strength < -0.5% (isolating weak stocks inside weak sectors).
+- Signal Assignment:
+  * Criteria for SHORT: Short Score >= 60.0 AND Short Score >= Long Score AND Total_Pct <= -0.30% AND Opening_Pct <= -0.25%.
+  * Criteria for LONG: Long Score >= 70.0 AND Long Score > Short Score AND Total_Pct >= 0.50% AND Opening_Pct >= 0.35%.
+  * Flag Conviction as "HIGH" if Short Score >= 75.0 (for Shorts) or Long Score >= 80.0 (for Longs). Otherwise, label as "TRADEABLE".
+
+====================================================================
+6. TELEMETRY MARKDOWN WEBHOOK INTERFACE
+====================================================================
+- Build an automated function using the 'requests' library to execute a POST transaction targeting the Telegram bot endpoint: "https://telegram.org{token}/sendMessage".
+- Parse the output table to extract the Top 5 Shorts and Top 3 Longs ranked by their structural scores.
+- Build a beautifully aligned Markdown alert containing: Ticker Symbol, Core Directional Signal, Quantitative Score, Pre-Market Gap Vector, Mapped Sector Alignment, and the current 09:45 Execution Price.
+- Trigger the webhook transmission the microsecond calculations finish at 09:45:05 AM IST.
