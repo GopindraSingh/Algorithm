@@ -80,3 +80,6 @@ Extract the first two candles of today's session: Candle 1 (09:15-09:30) and Can
 - Parse the output table to extract the Top 5 Shorts and Top 3 Longs ranked by their structural scores.
 - Build a beautifully aligned Markdown alert containing: Ticker Symbol, Core Directional Signal, Quantitative Score, Pre-Market Gap Vector, Mapped Sector Alignment, and the current 09:45 Execution Price.
 - Trigger the webhook transmission the microsecond calculations finish at 09:45:05 AM IST.
+
+
+Review all details provided in the system requirements document above. Generate the complete, fully modular, clean Python script matching this design template from scratch. Do not omit any mathematical logic or use placeholder scripts."
