@@ -1,0 +1,21 @@
+====================================================================
+5. UPGRADED SPECIFICATION: SYSTEM REGIME & LEVEL 2 LIQUIDITY MATRICES
+====================================================================
+Integrate these final institutional guardrails into the Phase 2 live validation pipeline before executing any automated order routing modules through the Dhan API:
+
+- NIFTY Multi-Timeframe Regime Filter:
+  * On a rolling background loop, pull 5-minute interval candle arrays for the 'NIFTY' index benchmark.
+  * Compute the 14-period ATR on this 5-minute index chart ('NIFTY_ATR_5m').
+  * Compute the 20-period rolling median of that ATR ('NIFTY_ATR_Median').
+  * Confirmation Rule: If NIFTY_ATR_5m > (NIFTY_ATR_Median * 1.50), the system must classify the market state as an 'Unstable High-Volatility Regime'. Instantly restrict entry triggers across all asset watchlists. The engine will remain in a passive holding state until the volatility ratio drops below the 1.50 threshold.
+
+- Level 2 Order Book Imbalance (OBI) Filter:
+  * The precise microsecond the 1-minute chart triggers a verified 9/21 EMA crossover, make an immediate API request to Dhan's real-time market depth data endpoint fetching the top 5 bid/ask limit levels.
+  * Compute Total_Bid_Volume = Sum of quantities across all top 5 buy limit orders.
+  * Compute Total_Ask_Volume = Sum of quantities across all top 5 sell limit orders.
+  * Confirmation Rule (SHORT): Validated only if Total_Ask_Volume >= (Total_Bid_Volume * 1.50). This proves an active overhead supply wall exists, confirming institutional sell pressure before execution.
+  * Confirmation Rule (LONG): Validated only if Total_Bid_Volume >= (Total_Ask_Volume * 1.50).
+
+- Execution Parameter Control (Position Auto-Square Off):
+  * Implement an absolute time-based risk override circuit breaker.
+  * Regardless of target or stop loss states, if any intraday trades remain open at exactly 15:10 IST, the system must bypass all technical indicators, cancel all outstanding limit/stop cover orders in the exchange book, and instantly route market square-off orders ('product_type="INTRADAY", order_type="MARKET"') to exit all risk exposures prior to the daily exchange closing window.
